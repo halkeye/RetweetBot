@@ -26,9 +26,13 @@ use File::HomeDir;
 use File::Spec;
 use Config::Std;
 use Carp;
+use Getopt::Std;
+
+my %opts;
+getopts('vc:', \%opts);
 
 $Carp::Verbose = 1;
-my $confFile = File::Spec->catfile(File::HomeDir->my_home, ".vanPortGamers.conf");
+my $confFile = $opts{'c'} || File::Spec->catfile(File::HomeDir->my_home, ".vanPortGamers.conf");
 my %conf;
 if (-e $confFile)
 {
@@ -72,10 +76,11 @@ unless ($limit->{remaining_hits})
 
 my $didChange = 0;
 
-foreach my $term ('#vpgamers')#, '#vanpgg')
+foreach my $term (grep { /^\#/ } keys %conf)
 {
     $conf{$term}{lastSeenId} ||= 0;
     my $status;
+    warn "Searching for $term\n" if $opts{v};
     my $r = $nt->search({
             since_id=>$conf{$term}{lastSeenId},
             q=>$term
