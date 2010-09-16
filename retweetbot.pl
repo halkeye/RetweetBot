@@ -85,20 +85,23 @@ foreach my $term (grep { /^\#/ } keys %conf)
             since_id=>$conf{$term}{lastSeenId},
             q=>$term
     });
-    eval {
         for $status ( @{$r->{results}} ) {
             next unless $status;
             next unless $status->{id} > $conf{$term}{lastSeenId};
-            $nt->retweet($status->{id});
+            # If its my tweet, ignore it
+            if ($status->{'from_user'} ne $conf{default}{username})
+            {
+                eval {
+                    $nt->retweet($status->{id});
+                };
+                if ($@)
+                {
+                    warn ("Error handling $term: $@ -- " . Data::Dumper::Dumper($status));
+                }
+            }
             $conf{$term}{lastSeenId} = $status->{id};
             $didChange = 1;
         }
-    };
-    if ($@)
-    {
-        warn ("Error handling $term: $@ -- " . Data::Dumper::Dumper($status));
-        last;
-    }
 }
 
 if (0)
