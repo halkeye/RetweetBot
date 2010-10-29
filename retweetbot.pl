@@ -28,6 +28,11 @@ use Config::Std;
 use Carp;
 use Getopt::Std;
 
+$SIG{__DIE__} = sub {
+    die @_ if $^S;
+    return if ($_[0] =~ /502: Bad Gateway/);
+    die @_;
+};
 my %opts;
 getopts('vc:', \%opts);
 
