@@ -7,7 +7,13 @@ require 'etc'
 require 'twitter'
 require 'sqlite3'
 
-# http://www.meetup.com/meetup_api/oauth_consumers/
+# post to facebook -
+# - http://stackoverflow.com/questions/4108932/whats-the-easiest-way-to-post-on-my-facebook-wall-through-my-ruby-on-rails-app/4890921#4890921
+# - https://github.com/nov/fb_graph
+# - http://stackoverflow.com/questions/4883699/easy-way-of-posting-on-facebook-page-not-a-profile-but-a-fanpage
+
+# meetup -
+# - http://www.meetup.com/meetup_api/
 
 def parseConfig(fileName)
     section = key = value = ""

@@ -9,7 +9,7 @@ use File::Spec;
 use Config::Std;
 use Carp;
 use Getopt::Std;
-use Scalar::Util;
+use Scalar::Util qw(blessed);
 
 my %opts;
 $opts{v} = 1 if $ENV{VIM};
