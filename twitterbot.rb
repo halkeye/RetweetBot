@@ -1,11 +1,29 @@
-#!env ruby
-require "rubygems"
-require "bundler/setup"
-
-require "rmeetup"
-require 'etc'
+#!/usr/bin/env ruby
+require 'configatron'
+require 'rmeetup'
 require 'twitter'
 require 'sqlite3'
+require 'oauth'
+require 'yaml'
+require 'optparse'
+
+$options = {
+  :config => File.join(Dir.home(),'.config', 'twitterbot.conf'),
+  :dbfile => File.join(Dir.home(),'.config', 'twitterbot.sqlite3')
+}
+OptionParser.new do |opts|
+  opts.banner = "Usage: download-patv.rb [options]"
+  opts.on("-c","--configfile", "configfile") do |v|
+    $options[:config] = v
+  end
+  opts.on("-d","--dbfile", "dbfile") do |v|
+    $options[:dbfile] = v
+  end
+  opts.on("-a","--add", "Add new group") do |v|
+    $options[:add_group] = true
+  end
+
+end.parse!
 
 # post to facebook -
 # - http://stackoverflow.com/questions/4108932/whats-the-easiest-way-to-post-on-my-facebook-wall-through-my-ruby-on-rails-app/4890921#4890921
@@ -15,28 +33,12 @@ require 'sqlite3'
 # meetup -
 # - http://www.meetup.com/meetup_api/
 
-def parseConfig(fileName)
-    section = key = value = ""
-    config  = Hash.new
-
-    file = File.open(fileName, "r")
-    while (line = file.gets)
-    #File.foreach fileName do |line|
-        if line =~ /^\s*$/
-        elsif line =~ /^\[(.+)\]$/
-            section = $1
-            config[section] = Hash.new
-        elsif line =~ /^(\w+)\s*:\s*(.+)$/
-            key = $1
-            value = $2
-            config[section][key] = value
-        else
-            raise "Don't know how to handle %s" % line
-        end
-    end
-    file.close()
-    return config
+if File.exists?($options[:config])
+  $config = configatron.configure_from_hash(YAML.load(File.read($options[:config])))
+else
+  $config = configatron.configure_from_hash({})
 end
+puts $config.inspect
 
 def getStatusFromSQL(ids)
     ret = Hash.new
@@ -76,32 +78,91 @@ def postUpdate(result)
         )
     end
 
-    msg = "%s%s @ %s - %s #vanpgg #meetup" % [ 
+    hashtags = []
+    hashtags = $config['hashtags'].dup if $config['hashtags']
+    hashtags.push('#meetup')
+
+    # TODO switch to #{} instead of printf
+    msg = "%s%s @ %s - %s %s" % [ 
         isReminder ? "[Reminder] " : "",
         result.name,
         result.time.strftime("%Y-%b-%-d @ %-l%p"), 
-        result.event_url
+        result.event_url,
+        hashtags.join(' ')
     ]
 
     puts msg
-    Twitter.update(msg)
+    # TODO - reminders use :in_reply_to_status_id =>  ?
+    $twitter.update(msg)
 end
 
-config = parseConfig(File.join(Etc.getpwuid.dir, '.vanPortGamers.conf'))
-
-Twitter.configure do |tconfig|
-    tconfig.consumer_key       = config['default']['consumer_key']
-    tconfig.consumer_secret    = config['default']['consumer_secret']
-    tconfig.oauth_token        = config['default']['access_token']
-    tconfig.oauth_token_secret = config['default']['access_token_secret']
+def write_config()
+  File.open($options[:config], "w") do |f| 
+    f.write $config.to_h.to_yaml
+  end
 end
 
-$db = SQLite3::Database.new(File.join(Etc.getpwuid.dir, '.vanPortGamers.db'))
+unless $config['consumer_key']
+  $stderr.puts "Enter Consumer Key:"
+  $config['consumer_key'] = (gets.chomp)
+  $stderr.puts "Enter Consumer Secret:"
+  $config['consumer_secret'] = (gets.chomp)
+  write_config()
+end
+
+if !$config['oauth_token_secret']
+  c = OAuth::Consumer.new(
+    $config['consumer_key'],
+    $config['consumer_secret'],
+    {
+      :site => "https://api.twitter.com",
+      :scheme => :header
+    }
+  )
+  request_token = c.get_request_token
+  $stderr.puts "\nPlease goto https://api.twitter.com/oauth/authorize?oauth_token=#{request_token.token} to register this app\n"
+  $stderr.puts
+  $stderr.puts "Enter PIN: "
+  pin = (gets.chomp).to_i
+  at = request_token.get_access_token(:oauth_verifier => pin)
+
+  $config['oauth_token'] = at.params[:oauth_token]
+  $config['oauth_token_secret'] = at.params[:oauth_token_secret]
+  write_config()
+end
+
+unless $config['meetup_key']
+  $stderr.puts "Enter Meetup Key (http://www.meetup.com/meetup_api/key/):"
+  $config['meetup_key'] = (gets.chomp)
+  write_config()
+end
+
+RMeetup::Client.api_key = $config['meetup_key']
+# TODO - change this to an option
+# twitterbot -a which would list ids and you can choose one
+if $options[:add_group] || !$config['meetup_group_id']
+  $stderr.puts "Enter Meetup Group UrlName:"
+  group_name = (gets.chomp)
+
+  $config['meetup_group_id'] ||= []
+  group = RMeetup::Client.fetch(:groups, { :group_urlname => group_name })[0]
+  $config['meetup_group_id'].push(group.id.to_i)
+  write_config()
+end
+
+$twitter = Twitter::REST::Client.new do |tconfig|
+    tconfig.consumer_key        = $config['consumer_key']
+    tconfig.consumer_secret     = $config['consumer_secret']
+    tconfig.access_token        = $config['oauth_token']
+    tconfig.access_token_secret = $config['oauth_token_secret']
+end
+$twitter.verify_credentials
+
+$db = SQLite3::Database.new($options[:dbfile])
 #$db.execute("DROP TABLE IF EXISTS meetup_seen");
 $db.execute("CREATE TABLE IF NOT EXISTS meetup_seen ( meetup_event_id int PRIMARY KEY, first_announce int, reminder_announce int  )");
 
-RMeetup::Client.api_key = config['default']['meetup_key']
-results = RMeetup::Client.fetch(:events,{:group_id => "1564870"})
+results = RMeetup::Client.fetch(:events,{:group_id => $config['meetup_group_id'].join(',')})
 event_ids = Array.new
 
 results.each do |result|
